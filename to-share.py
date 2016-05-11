@@ -230,7 +230,7 @@ def field_to_share(field):
 # Finds the child fields of a form / container field
 def get_child_fields(container):
    if isinstance(container,Form):
-      return container.json["fields"]
+      return container.json["editorJson"]["fields"] # Recent acitiviti export has been changed their JSON structure for the fields. Now "fields" are inside "editorJson"
    fields = []
    if container.get("fieldType","") == "ContainerRepresentation":
       for f in container["fields"]:
