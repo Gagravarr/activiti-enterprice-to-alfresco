@@ -211,7 +211,11 @@ def field_to_share(field):
    if ftype == "readonly-text":
        appearance += "  <control template=\"/org/alfresco/components/form/controls/readonly.ftl\">\n"
        appearance += "    <control-param name=\"value\">%s</control-param>\n" % field.get("value","")
-       appearance += "  </control>\n"
+       appearance += "  </control>\n"   
+   if ftype == "multi-line-text":
+       appearance += "  <control template=\"/org/alfresco/components/form/controls/textarea.ftl\">\n"
+       appearance += "    <control-param name=\"value\">%s</control-param>\n" % field.get("value","")
+       appearance += "  </control>\n"       
    if ftype in ("radio-buttons","dropdown") and options:
        appearance += "  <control template=\"/org/alfresco/components/form/controls/selectone.ftl\">\n"
        appearance += "    <control-param name=\"options\">%s</control-param>\n" % ",".join([o["name"] for o in options])
