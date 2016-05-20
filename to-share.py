@@ -382,8 +382,9 @@ for form in forms:
 
    # Process as a type
    model.start_type(form)
-   handle_fields(get_child_fields(form), share_form)
-   handle_outcomes(form.json.get("outcomes",[]), form, share_form)
+   handle_fields(get_child_fields(form), share_form) 
+   # Read the outcome property values form JSON.
+   handle_outcomes(form.json["editorJson"].get("outcomes",[]), form, share_form)
    model.end_type(form)
 
    # Do the Share Config conversion + output
