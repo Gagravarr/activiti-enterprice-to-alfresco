@@ -115,12 +115,12 @@ def build_field_type(field):
       print "Warning - unhandled type %s" % ftype
       print _field_to_json(field)
       ftype = "text"
-
+   
    alf_type = property_types.get(ftype, None)
    options = field.get("options",None)
-
-   return (ftype, alf_type, options)
-
+   frequired = field.get("required",None)
+   return (ftype, alf_type, options,frequired)
+   
 def _field_to_json(field):
    # Exclude bits we added onto the field
    fieldsmpl = dict((k,v) for k,v in field.iteritems() if not "aspect" in k)
@@ -161,7 +161,7 @@ def handle_outcomes(outcomes, form, share_form):
 
 def field_to_model(field, as_form):
    field_id, alf_id, name = build_field_ids(field)
-   ftype, alf_type, options = build_field_type(field)
+   ftype, alf_type, options,frequired = build_field_type(field)
 
    print " %s -> %s" % (field_id,name)
 
@@ -180,6 +180,8 @@ def field_to_model(field, as_form):
       model.write("           <type>%s</type>\n" % alf_type)
       if ftype == "readonly-text":
          model.write("           <default>%s</default>\n" % field.get("value",""))
+      if frequired:
+         model.write("           <mandatory>true</mandatory>\n")
       if options:
          model.write("           <constraints>\n")
          model.write("             <constraint type=\"LIST\">\n")
@@ -195,7 +197,7 @@ def field_to_model(field, as_form):
 
 def field_to_share(field):
    field_id, alf_id, name = build_field_ids(field)
-   ftype, alf_type, options = build_field_type(field)
+   ftype, alf_type, options,frequired = build_field_type(field)
 
    # Record the Share "field-visibility" for this
    share_form.record_visibility(alf_id)
@@ -211,11 +213,11 @@ def field_to_share(field):
    if ftype == "readonly-text":
        appearance += "  <control template=\"/org/alfresco/components/form/controls/readonly.ftl\">\n"
        appearance += "    <control-param name=\"value\">%s</control-param>\n" % field.get("value","")
-       appearance += "  </control>\n"
+       appearance += "  </control>\n"   
    if ftype == "multi-line-text":
        appearance += "  <control template=\"/org/alfresco/components/form/controls/textarea.ftl\">\n"
        appearance += "    <control-param name=\"value\">%s</control-param>\n" % field.get("value","")
-       appearance += "  </control>\n"
+       appearance += "  </control>\n"       
    if ftype in ("radio-buttons","dropdown") and options:
        appearance += "  <control template=\"/org/alfresco/components/form/controls/selectone.ftl\">\n"
        appearance += "    <control-param name=\"options\">%s</control-param>\n" % ",".join([o["name"] for o in options])
@@ -389,7 +391,7 @@ for form in forms:
 
    # Process as a type
    model.start_type(form)
-   handle_fields(get_child_fields(form), share_form)
+   handle_fields(get_child_fields(form), share_form) 
    handle_outcomes(form.json.get("outcomes",[]), form, share_form)
    model.end_type(form)
 
