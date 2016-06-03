@@ -5,6 +5,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from constants import *
 from converters import *
+from xml.sax.saxutils import escape
 
 if len(sys.argv) < 4 or "--help" in sys.argv:
   print "Use:"
@@ -176,7 +177,7 @@ def field_to_model(field, as_form):
    if alf_type:
       model.write("         <property name=\"%s\">\n" % alf_id)
       if name:
-         model.write("           <title>%s</title>\n" % name)
+         model.write("           <title>%s</title>\n" % escape(name))
       model.write("           <type>%s</type>\n" % alf_type)
       if ftype == "readonly-text":
          model.write("           <default>%s</default>\n" % field.get("value",""))
@@ -198,14 +199,14 @@ def field_to_model(field, as_form):
 def field_to_share(field):
    field_id, alf_id, name = build_field_ids(field)
    ftype, alf_type, options,frequired = build_field_type(field)
-
+   
    # Record the Share "field-visibility" for this
    share_form.record_visibility(alf_id)
 
    # Record the appearance details
    appearance = "<field id=\"%s\"" % alf_id
    if name:
-      appearance += " label=\"%s\"" % name
+      appearance += " label=\"%s\"" % escape(name)
    if field.get("readOnly", False):
       appearance += " read-only=\"true\""
    appearance += ">\n"
