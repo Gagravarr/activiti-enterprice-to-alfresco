@@ -1,4 +1,5 @@
 import xml.etree.ElementTree as ET
+from xml.sax.saxutils import escape
 from constants import *
 
 ##########################################################################
@@ -69,6 +70,7 @@ class ModelOutput(Output):
       self.to_close = "types"
 
    def begin(self, model_name, namespace_uri, namespace):
+      self.namespace = namespace
       self.out.write("""<?xml version='1.0' encoding='UTF-8'?>
 <model xmlns='http://www.alfresco.org/model/dictionary/1.0' name='%s'>
   <version>1.0</version>
@@ -101,7 +103,7 @@ class ModelOutput(Output):
          for assoc in self.associations:
             self.out.write("         <association name=\"%s\">\n" % assoc[0])
             if assoc[1]:
-               self.out.write("           <title>%s</title>\n" % assoc[1])
+               self.out.write("           <title>%s</title>\n" % escape(assoc[1]))
             self.out.write("           <source>\n")
             self.out.write("             <mandatory>%s</mandatory>\n" % str(assoc[2][0]).lower())
             self.out.write("             <many>%s</many>\n" % str(assoc[2][1]).lower())
@@ -120,7 +122,7 @@ class ModelOutput(Output):
       self.out.write("\n")
       self.out.write("    <type name=\"%s\">\n" % form.form_new_ref)
       if form.form_title:
-         self.out.write("       <title>%s</title>\n" % form.form_title)
+         self.out.write("       <title>%s</title>\n" % escape(form.form_title))
       self.out.write("       <parent>%s</parent>\n" % alf_task_type)
       self._start()
       self.aspects = form.aspects
@@ -143,6 +145,33 @@ class ModelOutput(Output):
    def end_aspect(self):
       self._end()
       self.out.write("    </aspect>\n")
+
+   def convert_field(self, field):
+      field_id, alf_id, name = build_field_ids(field, self.namespace)
+      ftype, alf_type, options, required = build_field_type(field)
+
+      # TODO Handle default values, multiples etc
+      if alf_type:
+         self.write("         <property name=\"%s\">\n" % alf_id)
+         if name:
+            self.write("           <title>%s</title>\n" % escape(name))
+         self.write("           <type>%s</type>\n" % alf_type)
+         if ftype == "readonly-text":
+            self.write("           <default>%s</default>\n" % escape( field.get("value","") ))
+         if required:
+            self.write("           <mandatory>true</mandatory>\n")
+         if options:
+            self.write("           <constraints>\n")
+            self.write("             <constraint type=\"LIST\">\n")
+            self.write("               <parameter name=\"allowedValues\"><list>\n")
+            for opt in options:
+               self.write("                 <value>%s</value>\n" % escape(opt["name"]))
+            self.write("               </list></parameter>\n")
+            self.write("             </constraint>\n")
+            self.write("           </constraints>\n")
+         self.write("         </property>\n")
+      if assoc_types.has_key(ftype):
+         self.associations.append((alf_id,name,assoc_types.get(ftype)))
 
    def complete(self):
       self.out.write("""
@@ -210,10 +239,11 @@ class ShareConfigOutput(Output):
 
 class ShareFormConfigOutput(object):
    default_indent = "        "
-   def __init__(self, share_config, process_id, form_ref):
+   def __init__(self, share_config, process_id, form_ref, namespace):
       self.share_config = share_config
       self.process_id = process_id
       self.form_ref = form_ref
+      self.namespace = namespace
 
       self.custom_transitions = []
       self.visabilities = []
@@ -225,6 +255,41 @@ class ShareFormConfigOutput(object):
       self.appearances.append(app)
    def record_custom_transition(self, field_id):
       self.custom_transitions.append(field_id)
+
+   def convert_field(self, field):
+      field_id, alf_id, name = build_field_ids(field, self.namespace)
+      ftype, alf_type, options, required = build_field_type(field)
+
+      # Record the Share "field-visibility" for this
+      self.record_visibility(alf_id)
+
+      # Record the appearance details
+      appearance = "<field id=\"%s\"" % alf_id
+      if name:
+         appearance += " label=\"%s\"" % escape(name)
+      if field.get("readOnly", False):
+         appearance += " read-only=\"true\""
+      appearance += ">\n"
+
+      value = escape(field.get("value",None) or "")
+      if ftype == "readonly-text":
+          appearance += "  <control template=\"/org/alfresco/components/form/controls/readonly.ftl\">\n"
+          appearance += "    <control-param name=\"value\">%s</control-param>\n" % value
+          appearance += "  </control>\n"
+      if ftype == "multi-line-text":
+          appearance += "  <control template=\"/org/alfresco/components/form/controls/textarea.ftl\">\n"
+          appearance += "    <control-param name=\"value\">%s</control-param>\n" % value
+          appearance += "  </control>\n"
+      if ftype in ("radio-buttons","dropdown") and options:
+          appearance += "  <control template=\"/org/alfresco/components/form/controls/selectone.ftl\">\n"
+          appearance += "    <control-param name=\"options\">%s</control-param>\n" % ",".join([ escape(o["name"]) for o in options])
+          appearance += "  </control>\n"
+      if field.get("transition", False):
+          appearance += "  <control template=\"/org/alfresco/components/form/controls/workflow/activiti-transitions.ftl\" />\n"
+          self.record_custom_transition(alf_id)
+
+      appearance += "</field>\n"
+      self.record_appearance(appearance)
 
    def write_out(self, is_start=False, as_start=False):
       share_config = self.share_config
@@ -300,6 +365,43 @@ def get_alfresco_task_types(form):
       return (alf_type, is_start_task)
    print "Error - Activiti task with form but no namespace - %s" % task_tag
    sys.exit(1)
+
+def build_field_ids(field, namespace):
+   field_id = field["id"]
+   for c in (u"\u2019","&",",",".",":",";"):
+      field_id = field_id.replace(c,"")
+   alf_id = "%s:%s" % (namespace, field_id)
+   name = field.get("name", None)
+   return (field_id, alf_id, name)
+
+def build_field_type(field):
+   ftype = field["type"]
+
+   # If type is "readonly", ensure the read only flag is properly set
+   if ftype == "readonly":
+      field["readOnly"] = True
+
+   # Is it one where the type information is nested?
+   if ftype in type_nested_in_params:
+      ftype = field["params"]["field"]["type"]
+
+   # Check how to convert
+   if not property_types.has_key(ftype) and not assoc_types.has_key(ftype):
+      print "Warning - unhandled type %s" % ftype
+      print _field_to_json(field)
+      ftype = "text"
+
+   alf_type = property_types.get(ftype, None)
+   required = field.get("required", False)
+   options = field.get("options", None)
+
+   return (ftype, alf_type, options, required)
+
+def _field_to_json(field):
+   # Exclude bits we added onto the field
+   import json
+   fieldsmpl = dict((k,v) for k,v in field.iteritems() if not "aspect" in k)
+   return json.dumps(fieldsmpl, sort_keys=True, indent=4, separators=(',', ': '))
 
 ##########################################################################
 

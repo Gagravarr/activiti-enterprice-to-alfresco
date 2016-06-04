@@ -3,9 +3,9 @@ import os, sys
 import json
 import zipfile
 import xml.etree.ElementTree as ET
+from collections import OrderedDict
 from constants import *
 from converters import *
-from xml.sax.saxutils import escape
 
 if len(sys.argv) < 4 or "--help" in sys.argv:
   print "Use:"
@@ -94,39 +94,6 @@ share_config.begin(model_name, namespace_uri, namespace)
 
 ##########################################################################
 
-def build_field_ids(field):
-   field_id = field["id"].replace(u"\u2019","")
-   alf_id = "%s:%s" % (namespace, field_id)
-   name = field.get("name", None)
-   return (field_id, alf_id, name)
-
-def build_field_type(field):
-   ftype = field["type"]
-
-   # If type is "readonly", ensure the read only flag is properly set
-   if ftype == "readonly":
-      field["readOnly"] = True
-
-   # Is it one where the type information is nested?
-   if ftype in type_nested_in_params:
-      ftype = field["params"]["field"]["type"]
-
-   # Check how to convert
-   if not property_types.has_key(ftype) and not assoc_types.has_key(ftype):
-      print "Warning - unhandled type %s" % ftype
-      print _field_to_json(field)
-      ftype = "text"
-   
-   alf_type = property_types.get(ftype, None)
-   options = field.get("options",None)
-   frequired = field.get("required",None)
-   return (ftype, alf_type, options,frequired)
-   
-def _field_to_json(field):
-   # Exclude bits we added onto the field
-   fieldsmpl = dict((k,v) for k,v in field.iteritems() if not "aspect" in k)
-   return json.dumps(fieldsmpl, sort_keys=True, indent=4, separators=(',', ': '))
-
 def handle_fields(fields, share_form):
    for field in fields:
       # Is this a normal field, or a container with children?
@@ -161,8 +128,7 @@ def handle_outcomes(outcomes, form, share_form):
    form.outcomes.append(outcome_prop)
 
 def field_to_model(field, as_form):
-   field_id, alf_id, name = build_field_ids(field)
-   ftype, alf_type, options,frequired = build_field_type(field)
+   field_id, alf_id, name = build_field_ids(field, namespace)
 
    print " %s -> %s" % (field_id,name)
 
@@ -171,64 +137,12 @@ def field_to_model(field, as_form):
    if as_form and field.has_key("on-aspect"):
       print "    Via aspect %s" % field["on-aspect"].name
       return
-
-   # TODO Handle required, default values, multiples etc
-
-   if alf_type:
-      model.write("         <property name=\"%s\">\n" % alf_id)
-      if name:
-         model.write("           <title>%s</title>\n" % escape(name))
-      model.write("           <type>%s</type>\n" % alf_type)
-      if ftype == "readonly-text":
-         model.write("           <default>%s</default>\n" % field.get("value",""))
-      if frequired:
-         model.write("           <mandatory>true</mandatory>\n")
-      if options:
-         model.write("           <constraints>\n")
-         model.write("             <constraint type=\"LIST\">\n")
-         model.write("               <parameter name=\"allowedValues\"><list>\n")
-         for opt in options:
-            model.write("                 <value>%s</value>\n" % opt["name"])
-         model.write("               </list></parameter>\n")
-         model.write("             </constraint>\n")
-         model.write("           </constraints>\n")
-      model.write("         </property>\n")
-   if assoc_types.has_key(ftype):
-      model.associations.append((alf_id,name,assoc_types.get(ftype)))
+   else:
+      # Convert to Property or Assoc
+      model.convert_field(field)
 
 def field_to_share(field):
-   field_id, alf_id, name = build_field_ids(field)
-   ftype, alf_type, options,frequired = build_field_type(field)
-   
-   # Record the Share "field-visibility" for this
-   share_form.record_visibility(alf_id)
-
-   # Record the appearance details
-   appearance = "<field id=\"%s\"" % alf_id
-   if name:
-      appearance += " label=\"%s\"" % escape(name)
-   if field.get("readOnly", False):
-      appearance += " read-only=\"true\""
-   appearance += ">\n"
-
-   if ftype == "readonly-text":
-       appearance += "  <control template=\"/org/alfresco/components/form/controls/readonly.ftl\">\n"
-       appearance += "    <control-param name=\"value\">%s</control-param>\n" % field.get("value","")
-       appearance += "  </control>\n"   
-   if ftype == "multi-line-text":
-       appearance += "  <control template=\"/org/alfresco/components/form/controls/textarea.ftl\">\n"
-       appearance += "    <control-param name=\"value\">%s</control-param>\n" % field.get("value","")
-       appearance += "  </control>\n"       
-   if ftype in ("radio-buttons","dropdown") and options:
-       appearance += "  <control template=\"/org/alfresco/components/form/controls/selectone.ftl\">\n"
-       appearance += "    <control-param name=\"options\">%s</control-param>\n" % ",".join([o["name"] for o in options])
-       appearance += "  </control>\n"
-   if field.get("transition", False):
-       appearance += "  <control template=\"/org/alfresco/components/form/controls/workflow/activiti-transitions.ftl\" />\n"
-       share_form.record_custom_transition(alf_id)
-
-   appearance += "</field>\n"
-   share_form.record_appearance(appearance)
+   share_form.convert_field(field)
    # TODO Use this to finish getting and handling the other options
    #print _field_to_json(field)
 
@@ -289,7 +203,7 @@ class Form(object):
       # TODO Filter out fields which are read-only on this form
       for aspect in self.aspects:
          for field in aspect.fields:
-            to_set.append( build_field_ids(field)[1] )
+            to_set.append( build_field_ids(field, namespace)[1] )
       # Have the BPMN updated for these
       if to_set:
          TaskToExecutionFixer.fix(self.form_elem, to_set)
@@ -319,6 +233,7 @@ for form_num in range(len(form_refs)):
    form.load_json()
    # Record this completed form
    forms.append( form )
+print ""
 
 ##########################################################################
 
@@ -335,13 +250,18 @@ for form in forms:
 
 class Aspect(object):
    def __init__(self, aspect_id, forms):
+      self._build_name(aspect_id)
       self.aspect_id = aspect_id
-      self.name = "%s:Aspect%d" % (namespace, aspect_id)
       self.fields = []
       self.field_ids = []
       self.forms = forms
       for form in forms:
          form.aspects.append(self)
+   def _build_name(self, aspect_id):
+      if not type(aspect_id) in (str,unicode):
+         aspect_id = "%d" % aspect_id
+      self.base_name = "Aspect%s" % aspect_id
+      self.name = "%s:%s" % (namespace, self.base_name)
    def add_field(self, field_id, field):
       # Record only the first instance of a field for model use
       if not field_id in self.field_ids:
@@ -352,7 +272,7 @@ class Aspect(object):
 
 # Group the fields by forms using them
 aspects = []
-_tmp_aspects = {}
+_tmp_aspects = OrderedDict()
 for field_id in form_fields.keys():
    field_forms = form_fields[field_id].keys()
    if len(field_forms) > 1:
@@ -365,11 +285,16 @@ for field_id in form_fields.keys():
          field = form_fields[field_id][form]
          _tmp_aspects[wanted_by].add_field(field_id, field)
 
-# Rpeort what Aspects we've built
+# For the aspects with one field, try to give them a better name
+for aspect in aspects:
+   if len(aspect.fields) == 1:
+      field_id = build_field_ids(aspect.fields[0], namespace)[0]
+      aspect._build_name(field_id)
+
+# Report what Aspects we've built
 for wb, aspect in _tmp_aspects.items():
-   print ""
-   print "Aspect %d needed by %d forms, with %d fields" % \
-         (aspect.aspect_id, len(aspect.forms), len(aspect.fields))
+   print "Aspect %d needed by %d forms, with %d fields, called %s" % \
+         (aspect.aspect_id, len(aspect.forms), len(aspect.fields), aspect.base_name)
 
 ##########################################################################
 
@@ -388,11 +313,11 @@ for form in forms:
    alf_task_type, is_start_task = get_alfresco_task_types(form)
 
    # Prepare for the Share Config part
-   share_form = ShareFormConfigOutput(share_config, process_id, form_new_ref)
+   share_form = ShareFormConfigOutput(share_config, process_id, form_new_ref, namespace)
 
    # Process as a type
    model.start_type(form)
-   handle_fields(get_child_fields(form), share_form) 
+   handle_fields(get_child_fields(form), share_form)
    handle_outcomes(form.json.get("outcomes",[]), form, share_form)
    model.end_type(form)
 
