@@ -249,11 +249,11 @@ public interface %s
 
    def convert_type(self, form):
       name = form.form_new_name
-      self.out.write("   public static final QNAME TYPE_%s = QName.createQName(URI, \"%s\");\n" %
+      self.out.write("   public static final QName TYPE_%s = QName.createQName(URI, \"%s\");\n" %
                      (name.upper(), name))
    def convert_aspect(self, aspect):
       aname = aspect.aspect_id_str.upper()
-      self.out.write("   public static final QNAME ASPECT_%s = QName.createQName(URI, \"%s\");\n" %
+      self.out.write("   public static final QName ASPECT_%s = QName.createQName(URI, \"%s\");\n" %
                      (aname, aspect.base_name))
 
    def convert_property(self, field_id, name):
@@ -263,7 +263,7 @@ public interface %s
    def complete(self):
       self.out.write("\n")
       for pname in sorted(self.properties.keys()):
-         self.out.write("   public static final QNAME PROP_%s = QName.createQName(URI, \"%s\");\n" %
+         self.out.write("   public static final QName PROP_%s = QName.createQName(URI, \"%s\");\n" %
                         (pname, self.properties[pname]))
       self.out.write("}\n")
       Output.complete(self)
